@@ -1,0 +1,425 @@
+<conversion>
+	<properties>
+		<property name="verbose">true</property>
+		<property name="environment">Guam</property><!-- ex: Chippewa -->
+		<property name="sql.ecourt.db" desc="eSeries database name">guameCourtConfig</property><!-- ex: Chippewa-Config -->
+		<property name="sql.ecourt.db.connstring" desc="connection string to eSeries database">Integrated Security=SSPI;Persist Security Info=False;Initial Catalog=guameCourtConfig;
+		</property>
+		<property name="files.folder" desc="folder location for output and debug files">C:\eSeries\eCourt\ConversionFiles\output</property><!-- ex: C:\eSeries\Mapping\${environment} -->
+		<property name="log.folder" desc="logs location">C:\Users\ekeithly\OneDrive - Journal Technologies\Documents\USPS\Logs</property>
+		<property name="filename" desc="name of excel mapping document">${environment} Conversion Mapping Document {0:M-d-yyyy}.xlsx</property>
+		<property name="rest.url" desc="eSeries rest url is http:// or https:// + {main url} + /{context path - typically sustain or ecourt} + /ws/rest/ecourt/">http://localhost:82/ws/rest/ecourt/</property> <!-- ex: http://saginaw-training.symphony.int/sustain/ws/rest/ecourt/ -->
+		<property name="rest.username" desc="ecourt login username">admin</property>
+		<property name="rest.password" dessc="ecourt login password">@pass$</property>
+	</properties>
+	<databases>
+		<database name="${sql.ecourt.db}" description="eCourt database" type="SqlServer" version="2017" connectionstring="${sql.ecourt.db.connstring}"/>
+	</databases>
+	<stages>
+		<stage num="0" mode="Serial">
+			<actions>
+				<action handler="SqlServer.TestConnection" desc="Verify connectivity" progresslabel="conn test" onerror="Halt" enabled="true">
+					<source database="${sql.ecourt.db}"/>
+				</action>
+				<action handler="Ecourt.AddMetatdataToSqlServer" desc="Update sql server with ecourt metadata" progresslabel="get metadata" onerror="Halt" enabled="true">
+					<source database="${sql.ecourt.db}"/>	
+					<params>
+						<param name="url">${rest.url}</param>
+						<param name="username">${rest.username}</param>
+						<param name="password">${rest.password}</param>
+						<param name="json">{"ruleCode":"MetaData_Export"}</param> 
+						<param name="timeout">0</param>
+						<param name="tasks">
+							<task handler="Ecourt.StoreParam"><args key="_ecourt.metadata">$[output]</args></task>
+						</param>
+					</params>
+				</action>
+			</actions>
+		</stage>
+		<stage num="1" mode="Serial">
+			<actions>
+			
+				<!-- DO NOT CHANGE ANYTHING BELOW UNLESS YOU KNOW WHAT YOU ARE DOING! -->
+				<action handler="Ecourt.GetInventory" desc="creates an excel file with mapping data derived from configuration and entity relationships" progresslabel="inventory">
+					<source database="${sql.ecourt.db}" schema="ecourt"/>	
+					<params>
+						<param name="debugFilesPath">${files.folder}</param>
+						<param name="filename">${filename}</param>
+						<param name="menuQuery" desc="Sql query that obtains the folder views by caseType and custom update form ids">
+							SELECT  
+	mct.caseTypes 'caseType',
+	l.label 'desc',
+	null 'same-as',
+	mi2.folderView_id 'fv_id',  
+	f2.formName 'fv_name',  
+	f2.code 'fv_code',  
+	fi.id 'formitem_id',  
+	fi.num,  
+	fi.[type], --panel is between 2 and 3 (not sure if any folder views are nested)  
+	fi.field,  
+	Left(fi.field, Len(fi.field) - CharIndex('.', Reverse(fi.field) + '.')) 'entity', 
+	Reverse(Substring(Reverse(f2.rootEntity), 1, CharIndex('.', Reverse(f2.rootEntity))-1)) + '.' + fi.[path] 'fullPath',			
+	f3.id 'update_form_id',
+	fi.link,
+	Coalesce('condition: ' + cn.name, 'operator: ' + fi.operator + Coalesce(' ' + Cast(fi.condValue as varchar(max)), '')) 'logic',
+	fi.hidden
+FROM  
+	ecourt.tMenu m  
+	inner join ecourt.tMenu_caseTypes mct on mct.Menu_id = m.id  
+	inner join  
+		(SELECT li.code, li.label  
+		FROM  
+			ecourt.tLookupItem li  
+			inner join ecourt.tLookupList ll on ll.id = li.lookuplist_id and ll.name = 'CASE_TYPE'  
+		) as l on l.code = mct.caseTypes  
+	inner join ecourt.tMenuItem mi on mi.id = m.root_id --root-level  
+	inner join ecourt.tMenuItem mi2 on mi2.parent_id = m.root_id--level 1 children (tabs / folder views)  
+
+	left outer join ecourt.tForm f2 on f2.id = mi2.folderView_id  
+	inner join ecourt.tFormItem fi on fi.associatedForm_id = mi2.folderView_id  
+	left outer join ecourt.tForm f3 on f3.id = fi.linkForm_id
+
+	left outer join ecourt.tFormItem_conditions ft on ft.tFormItem_id = fi.id
+	left outer join ecourt.tCondition cn on cn.id = ft.conditions_id
+	
+WHERE
+	fi.[type] in (0,2,3) --create panel flow
+	and (fi.[path] is null or fi.[path] not like '%.otherPersons.%') --remove "bridge" entities that confuse the relationships
+	--and mct.caseTypes in ('190000')
+	and fi.hidden = 0 --remove any items that are not showing on the fv
+	and (fi.[type] != 0 OR (fi.[type] = 0 and fi.field not like 'com.sustain.dir.%' and fi.field not like 'com.sustain.financial.%'))
+
+union all
+
+SELECT
+	'DEFAULT_MENU' 'caseType',--Coalesce(mct.caseTypes, 'DEFAULT_MENU') caseType,
+	'DEFAULT_MENU' 'desc',
+	null 'same-as',
+	mi2.folderView_id 'fv_id',  
+	f2.formName 'fv_name',  
+	f2.code 'fv_code',  
+	fi.id 'formitem_id',  
+	fi.num,  
+	fi.[type], --panel is between 2 and 3 (not sure if any folder views are nested)  
+	fi.field,  
+	Left(fi.field, Len(fi.field) - CharIndex('.', Reverse(fi.field) + '.')) 'entity', 
+	Reverse(Substring(Reverse(f2.rootEntity), 1, CharIndex('.', Reverse(f2.rootEntity))-1)) + '.' + fi.[path] 'fullPath',			
+	f3.id 'update_form_id',
+	fi.link,
+	Coalesce('condition: ' + cn.name, 'operator: ' + fi.operator + Coalesce(' ' + Cast(fi.condValue as varchar(max)), '')) 'logic',
+	fi.hidden
+FROM  
+	ecourt.tMenu m  
+
+	inner join ecourt.tMenuItem mi on mi.id = m.root_id --root-level  
+	inner join ecourt.tMenuItem mi2 on mi2.parent_id = m.root_id--level 1 children (tabs / folder views)  
+
+	left outer join ecourt.tForm f2 on f2.id = mi2.folderView_id  
+	inner join ecourt.tFormItem fi on fi.associatedForm_id = mi2.folderView_id  
+	left outer join ecourt.tForm f3 on f3.id = fi.linkForm_id
+
+	left outer join ecourt.tFormItem_conditions ft on ft.tFormItem_id = fi.id
+	left outer join ecourt.tCondition cn on cn.id = ft.conditions_id
+
+	inner join (
+		SELECT Min(id) id FROM ecourt.tMenu WHERE caseDefault = 1 and targetEntity = 'com.sustain.cases.model.Case'
+	) as mx on mx.id = m.id
+
+WHERE
+	fi.[type] in (0,2,3) --create panel flow
+	and (fi.[path] is null or fi.[path] not like '%.otherPersons.%') --remove "bridge" entities that confuse the relationships
+	--and mct.caseTypes in ('190000')
+	and fi.hidden = 0 --remove any items that are not showing on the fv
+	and (fi.[type] != 0 OR (fi.[type] = 0 and fi.field not like 'com.sustain.dir.%' and fi.field not like 'com.sustain.financial.%'))
+
+ORDER BY caseType, fv_id, fi.num;
+						</param>
+						<param name="xrefQueryMask">
+							SELECT Distinct
+								Coalesce(et.entityName, f.rootEntity) 'from', --fragile
+								fi.xrefType,
+								fi.targetEntity 'to'
+							FROM
+								ecourt.tForm f 
+								inner join ecourt.tFormItem fi on f.id=fi.associatedForm_id
+								left outer join dbo.EntityTable et on et.entityName like '%.' + fi.[path]
+							WHERE 
+								fi.[type] = 6
+								and f.id in ({0});
+						</param>
+						<param name="formItemQueryMask">
+							SELECT distinct
+								Reverse(Substring(Replace(Reverse(fi.field), Substring(Reverse(fi.field), 1, CharIndex('.', Reverse(fi.field))), ''), 1, CharIndex('.', Replace(Reverse(fi.field), Substring(Reverse(fi.field), 1, CharIndex('.', Reverse(fi.field))), ''))-1)) 'entity',
+								fi.field,
+								c.TABLE_NAME,
+								c.COLUMN_NAME,
+								c.IS_NULLABLE,	
+								fi.[required],
+								--fi.[path],
+								Cast(fi.label as varchar(max)) 'label',
+								CASE 
+									WHEN c.DATA_TYPE in ('varchar','char') THEN c.DATA_TYPE + '(' + Cast(c.CHARACTER_MAXIMUM_LENGTH as varchar) + ')'
+									WHEN c.DATA_TYPE = 'numeric' THEN 'numeric(' + Cast(c.NUMERIC_PRECISION as varchar) + ',' + Cast(c.NUMERIC_SCALE as varchar) + ')'
+									ELSE c.DATA_TYPE END 'DATA_TYPE',
+								p.lookupListName,
+								et.parentTableName,
+								et.parentEntityName,
+								cn.id 'showIfCondId',
+								cn.name 'showIfCondName',
+								Cast(cn.expression as varchar(max)) 'showIfCondExpression'
+							FROM 
+								ecourt.tFormItem fi with(nolock)
+								inner join ecourt.tForm f with(nolock) on f.id = fi.associatedForm_id 
+								inner join dbo.EntityProperty p with(nolock) on p.propertyName = fi.field
+								inner join INFORMATION_SCHEMA.COLUMNS c with(nolock) on p.columnName = c.COLUMN_NAME and p.tableName = c.TABLE_NAME
+								inner join dbo.EntityTable et with(nolock) on et.tableName = c.TABLE_NAME
+								left outer join ecourt.tCondition cn with(nolock) on cn.id = fi.showIfCondition_id
+							WHERE 
+								c.TABLE_SCHEMA = 'ecourt'
+								and fi.field is not null 
+								and fi.field not like 'com.sustain.dir.%' 
+								and fi.field not like 'com.sustain.form.%' 
+								and fi.hidden = 0 
+								and f.id in ({0});
+						</param>
+						<param name="sqlTableMetadataQueryMask">
+							SELECT
+								et.entityName + '.' + c.COLUMN_NAME 'field', --cheating
+								et.parentTableName,
+								et.parentEntityName,
+								c.TABLE_NAME,
+								c.COLUMN_NAME, 
+								c.IS_NULLABLE, 
+								x.CONSTRAINT_TYPE 'KEY_TYPE',
+								CASE 
+									WHEN c.DATA_TYPE in ('varchar','char') THEN c.DATA_TYPE + '(' + Cast(c.CHARACTER_MAXIMUM_LENGTH as varchar) + ')'
+									WHEN c.DATA_TYPE = 'numeric' THEN 'numeric(' + Cast(c.NUMERIC_PRECISION as varchar) + ',' + Cast(c.NUMERIC_SCALE as varchar) + ')'
+									ELSE c.DATA_TYPE END 'DATA_TYPE',
+								y.fkTo
+							FROM 
+								INFORMATION_SCHEMA.COLUMNS c with(nolock)
+								inner join dbo.EntityTable et with(nolock) on et.tableName = c.TABLE_NAME
+								left outer join (
+									SELECT tc.TABLE_NAME, kcu.COLUMN_NAME, tc.CONSTRAINT_TYPE, tc.CONSTRAINT_NAME
+									FROM 
+										INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc with(nolock)
+										inner join INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu with(nolock) on tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+									WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY' or tc.CONSTRAINT_TYPE = 'FOREIGN KEY' 
+									) as x on c.TABLE_NAME = x.TABLE_NAME and c.COLUMN_NAME = x.COLUMN_NAME
+
+								left outer join (
+									SELECT
+										o1.name as referencing_table,
+										c1.name as referencing_column,
+										s.name as constraint_name,
+										o2.name + '.' + c2.name 'fkTo'
+									FROM
+										sysforeignkeys fk
+										inner join sysobjects o1 on fk.fkeyid = o1.id
+										inner join sysobjects o2 on fk.rkeyid = o2.id
+										inner join syscolumns c1 on c1.id = o1.id and c1.colid = fk.fkey
+										inner join syscolumns c2 on c2.id = o2.id and c2.colid = fk.rkey
+										inner join sysobjects s on fk.constid = s.id
+								) as y on x.TABLE_NAME = y.referencing_table and y.referencing_column = y.referencing_column and y.constraint_name = x.CONSTRAINT_NAME
+							WHERE
+								c.TABLE_SCHEMA = 'ecourt' 
+								and c.TABLE_NAME in ({0})
+								and 
+									(c.IS_NULLABLE = 'NO' 
+									or x.COLUMN_NAME = 'subCase_id' 
+									or (x.TABLE_NAME = 'tCaseAssignment' and x.COLUMN_NAME = 'person_id')
+									or (c.COLUMN_NAME in ('dateCreated', 'lastUpdated', 'createUsername', 'lastUpdateUsername')));
+						</param>
+						
+						<!-- Optional - This param is sabotaged by default to be excluded.  To use it, change the param name to 'augmentFromAddFormsQuery'. 
+							Only use this when you understand what it does and know how to use it. -->
+						<param name="augmentFromAddFormsQuery">
+SELECT
+    Reverse(Substring(Replace(Reverse(fi.field), Substring(Reverse(fi.field), 1, CharIndex('.', Reverse(fi.field))), ''), 1, CharIndex('.', Replace(Reverse(fi.field), Substring(Reverse(fi.field), 1, CharIndex('.', Reverse(fi.field))), ''))-1)) 'entity',
+    fi.field,
+    c.TABLE_NAME,
+    c.COLUMN_NAME,
+    c.IS_NULLABLE,  
+    x.requiredByForm,
+    CASE 
+        WHEN c.DATA_TYPE in ('varchar','char') THEN c.DATA_TYPE + '(' + Cast(c.CHARACTER_MAXIMUM_LENGTH as varchar) + ')'
+        WHEN c.DATA_TYPE = 'numeric' THEN 'numeric(' + Cast(c.NUMERIC_PRECISION as varchar) + ',' + Cast(c.NUMERIC_SCALE as varchar) + ')'
+        ELSE c.DATA_TYPE END 'DATA_TYPE',
+    p.lookupListName,
+    et.parentTableName,
+    et.parentEntityName,
+    et.parentOrSubCase,
+    y.underSC
+FROM 
+    ecourt.tForm f
+    inner join ecourt.tFormItem fi on f.id = fi.associatedForm_id
+    inner join dbo.EntityProperty p with(nolock) on p.propertyName = fi.field
+    inner join INFORMATION_SCHEMA.COLUMNS c with(nolock) on p.columnName = c.COLUMN_NAME and p.tableName = c.TABLE_NAME
+    inner join dbo.EntityTable et with(nolock) on et.tableName = c.TABLE_NAME
+    inner join (
+        SELECT fi.field, Max(fi.required) requiredByForm
+        FROM ecourt.tForm f inner join ecourt.tFormItem fi on f.id = fi.associatedForm_id
+        WHERE f.[type] in (1,2) and fi.DTYPE = 'formitem' and fi.[type] = 0
+        GROUP BY fi.field
+        ) x on x.field = fi.field
+        
+    inner join (
+        SELECT distinct
+            fi.field,
+            CASE 
+                WHEN et.parentOrSubCase = 0 THEN 0
+                WHEN f.parentEntity = 'com.sustain.cases.model.SubCase' THEN 1
+                ELSE 0 END underSC
+        FROM
+            ecourt.tForm f
+            inner join ecourt.tFormItem fi on f.id = fi.associatedForm_id
+            inner join dbo.EntityProperty p with(nolock) on p.propertyName = fi.field
+            inner join dbo.EntityTable et with(nolock) on et.tableName = p.tableName
+        WHERE
+            f.[type] in (1,2)
+            and fi.DTYPE = 'formitem'
+            and fi.[type] = 0
+        GROUP BY
+            fi.field, et.parentEntityName, et.parentOrSubCase, f.parentEntity
+        ) y on y.field = fi.field
+WHERE
+    f.[type] in (1,2)
+    and c.TABLE_SCHEMA = 'ecourt'
+    and fi.DTYPE = 'formitem'
+    and fi.[type] = 0
+    and fi.field is not null
+    and fi.field not like 'com.sustain.dir.%'
+    and fi.field not like 'com.sustain.form.%'
+    and c.TABLE_NAME = 'tSubCase'
+GROUP BY
+    fi.field, 
+    c.TABLE_NAME, c.COLUMN_NAME, c.IS_NULLABLE, p.lookupListName, et.parentTableName, et.parentEntityName, et.parentOrSubCase,
+    c.DATA_TYPE, c.CHARACTER_MAXIMUM_LENGTH, c.NUMERIC_PRECISION, c.NUMERIC_SCALE, x.requiredByForm, y.underSC
+ORDER BY TABLE_NAME, COLUMN_NAME
+						</param>
+						
+						<!-- Optional:  This inserts items into the spreadsheet that would not be naturally included by the process -->
+						<param name="staticMapItems">
+							<inventory>
+								<!-- tDocument dms columns --> 
+								<itm fld="com.sustain.document.model.Document.storageId" tbl="tDocument" col="storageId" dt="varchar(255)" ptbl="tCase" pefn="com.sustain.cases.model.Case" cat="dms" desc="dms: path to file"/>
+								<itm fld="com.sustain.document.model.Document.storageStatus" tbl="tDocument" col="storageStatus" dt="varchar(255)" ptbl="tCase" pefn="com.sustain.cases.model.Case" desc="dms: default to 'COMPLETE' if storageId is set" cat="dms"/>
+								<itm fld="com.sustain.document.model.Document.storageType" tbl="tDocument" col="storageType" dt="varchar(255)" ptbl="tCase" pefn="com.sustain.cases.model.Case" desc="dms: default to 'sustain-dms'" cat="dms"/>
+								<itm fld="com.sustain.document.model.Document.storageMimeType" tbl="tDocument" col="storageMimeType" dt="varchar(255)" ptbl="tCase" pefn="com.sustain.cases.model.Case" desc="dms: mimetype if you have it - example: 'application/pdf'" cat="dms"/>
+								<itm fld="com.sustain.document.model.Document.storageSize" tbl="tDocument" col="storageSize" dt="numeric(19,0)" ptbl="tCase" pefn="com.sustain.cases.model.Case" cat="dms" desc="dms: file size in bytes if you have it"/>
+								<itm fld="com.sustain.document.model.Document.storagePageCount" tbl="tDocument" col="storagePageCount" dt="int" ptbl="tCase" pefn="com.sustain.cases.model.Case" cat="dms" desc="dms: number of pages if you have it"/>
+								<!-- tDocumentStorageId -->
+								<itm fld="com.sustain.document.model.DocumentStorageId.createUsername" tbl="tDocumentStorageId" col="createUsername" dt="varchar(255)" nf="true" pefn="com.sustain.document.model.Document" pent="Document" ptbl="tDocument" cat="dms" caseTypes="?"/>
+								<itm fld="com.sustain.document.model.DocumentStorageId.dateCreated" tbl="tDocumentStorageId" col="dateCreated" dt="datetime" nf="true" pefn="com.sustain.document.model.Document" pent="Document" ptbl="tDocument" cat="dms"/>
+								<itm fld="com.sustain.document.model.DocumentStorageId.lastUpdateUsername" tbl="tDocumentStorageId" col="lastUpdateUsername" nf="true" dt="varchar(255)" pefn="com.sustain.document.model.Document" pent="Document" ptbl="tDocument" cat="dms"/>
+								<itm fld="com.sustain.document.model.DocumentStorageId.lastUpdated" tbl="tDocumentStorageId" col="lastUpdated" dt="datetime" nf="true" pefn="com.sustain.document.model.Document" pent="Document" ptbl="tDocument" cat="dms"/>
+								<itm fld="com.sustain.document.model.DocumentStorageId.optlock" tbl="tDocumentStorageId" col="optlock" dt="int" nf="true" pefn="com.sustain.document.model.Document" pent="Document" ptbl="tDocument" cat="dms"/>
+								<itm fld="com.sustain.document.model.DocumentStorageId.storageId" tbl="tDocumentStorageId" nn="true" col="storageId" dt="varchar(255)" pefn="com.sustain.document.model.Document" pent="Document" ptbl="tDocument" desc="same storageId as related document storageId" cat="dms"/>
+								<itm fld="com.sustain.document.model.DocumentStorageId.document" tbl="tDocumentStorageId" nn="true" col="document_id" dt="numeric(19,0)" fkto="tDocument.id" pefn="com.sustain.document.model.Document" pent="Document" ptbl="tDocument" cat="dms"/>
+								<itm fld="com.sustain.document.model.DocumentStorageId.id" tbl="tDocumentStorageId" nn="true" col="id" dt="numeric(19,0)" pk="true" nf="true" pefn="com.sustain.document.model.Document" pent="Document" ptbl="tDocument" desc="related document id" cat="dms"/>
+								<!-- tDocumentStorageType -->
+								<itm fld="com.sustain.document.model.DocumentStorageType.createUsername" tbl="tDocumentStorageType" col="createUsername" dt="varchar(255)" nf="true" pefn="com.sustain.document.model.Document" pent="Document" ptbl="tDocument" cat="dms" caseTypes="?"/>
+								<itm fld="com.sustain.document.model.DocumentStorageType.dateCreated" tbl="tDocumentStorageType" col="dateCreated" dt="datetime" nf="true" pefn="com.sustain.document.model.Document" pent="Document" ptbl="tDocument" cat="dms"/>
+								<itm fld="com.sustain.document.model.DocumentStorageType.lastUpdateUsername" tbl="tDocumentStorageType" col="lastUpdateUsername" dt="varchar(255)" nf="true" pefn="com.sustain.document.model.Document" pent="Document" ptbl="tDocument"  cat="dms"/>
+								<itm fld="com.sustain.document.model.DocumentStorageType.lastUpdated" tbl="tDocumentStorageType" col="lastUpdated" dt="datetime" nf="true" pefn="com.sustain.document.model.Document" pent="Document" ptbl="tDocument" cat="dms"/>
+								<itm fld="com.sustain.document.model.DocumentStorageType.optlock" tbl="tDocumentStorageType" col="optlock" dt="int" nf="true" pefn="com.sustain.document.model.Document" pent="Document" ptbl="tDocument" cat="dms"/>
+								<itm fld="com.sustain.document.model.DocumentStorageType.storageType" tbl="tDocumentStorageType" nn="true" col="storageType" dt="varchar(255)" pefn="com.sustain.document.model.Document" pent="Document" ptbl="tDocument" desc="same storageType as related document storageId" cat="dms"/>
+								<itm fld="com.sustain.document.model.DocumentStorageType.document_id" tbl="tDocumentStorageType" nn="true" col="document_id" dt="numeric(19,0)" fkto="tDocument.id" pefn="com.sustain.document.model.Document" pent="Document" ptbl="tDocument" desc="related document id" cat="dms"/>
+								<itm fld="com.sustain.document.model.DocumentStorageType.id" tbl="tDocumentStorageType" nn="true" col="id" dt="numeric(19,0)" pk="true" nf="true" pefn="com.sustain.document.model.Document" pent="Document" ptbl="tDocument" desc="related document id" cat="dms"/>
+								<!-- tRestitution -->
+								<itm fld="com.sustain.cases.model.Restitution.payeeIdentifier_id" tbl="tRestitution" col="payeeIdentifier_id" nn="true" dt="numeric(19,0)" nf="true" fkto="tPersonIdentifier.id" pefn="com.sustain.person.model.PersonIdentifier" pent="PersonIdentifier" ptbl="tPersonIdentifier" desc="fk column to tPersonIdentifier.id; PI for person receiving restitution" cat="financial" caseTypes="?"/>
+								<itm fld="com.sustain.cases.model.Restitution.createUsername" tbl="tRestitution" col="createUsername" dt="varchar(255)" nf="true" pefn="com.sustain.person.model.PersonIdentifier" pent="PersonIdentifier" ptbl="tPersonIdentifier" cat="financial"/>
+								<itm fld="com.sustain.cases.model.Restitution.dateCreated" tbl="tRestitution" col="dateCreated" dt="datetime" nf="true" pefn="com.sustain.person.model.PersonIdentifier" pent="PersonIdentifier" ptbl="tPersonIdentifier" cat="financial"/>
+								<itm fld="com.sustain.cases.model.Restitution.lastUpdateUsername" tbl="tRestitution" col="lastUpdateUsername" dt="varchar(255)" nf="true" pefn="com.sustain.person.model.PersonIdentifier" pent="PersonIdentifier" ptbl="tPersonIdentifier" cat="financial"/>
+								<itm fld="com.sustain.cases.model.Restitution.lastUpdated" tbl="tRestitution" col="lastUpdated" dt="datetime" nf="true" pefn="com.sustain.person.model.PersonIdentifier" pent="PersonIdentifier" ptbl="tPersonIdentifier" cat="financial"/>
+								<itm fld="com.sustain.cases.model.Restitution.optlock" tbl="tRestitution" col="optlock" dt="int" nf="true" pefn="com.sustain.person.model.PersonIdentifier" pent="PersonIdentifier" ptbl="tPersonIdentifier" cat="financial"/>
+								<itm fld="com.sustain.cases.model.Restitution.amount" tbl="tRestitution" col="amount" dt="float" nn="true" pefn="com.sustain.person.model.PersonIdentifier" pent="PersonIdentifier" ptbl="tPersonIdentifier" cat="financial"/>
+								<itm fld="com.sustain.cases.model.Restitution.status" tbl="tRestitution" col="status" dt="varchar(255)" nn="true" ll="RESTITUTION_STATUS" pefn="com.sustain.person.model.PersonIdentifier" pent="PersonIdentifier" ptbl="tPersonIdentifier" cat="financial"/>
+								<itm fld="com.sustain.cases.model.Restitution.interestBearing" tbl="tRestitution" col="interestBearing" dt="int" nn="true" pefn="com.sustain.person.model.PersonIdentifier" pent="PersonIdentifier" ptbl="tPersonIdentifier" desc="0=true/1=false" cat="financial"/>
+								<itm fld="com.sustain.cases.model.Restitution.reason" tbl="tRestitution" col="reason" ll="RESTITUTION_REASON" dt="varchar(255)" pefn="com.sustain.person.model.PersonIdentifier" pent="PersonIdentifier" ptbl="tPersonIdentifier" cat="financial"/>
+								<itm fld="com.sustain.cases.model.Restitution.restitutionType" tbl="tRestitution" col="restitutionType" nn="true" ll="RESTITUTION_TYPE" dt="varchar(255)" pefn="com.sustain.person.model.PersonIdentifier" pent="PersonIdentifier" ptbl="tPersonIdentifier" cat="financial"/>
+								<itm fld="com.sustain.cases.model.Restitution.paymentPriority" tbl="tRestitution" col="paymentPriority" nn="true" dt="int" pefn="com.sustain.person.model.PersonIdentifier" pent="PersonIdentifier" ptbl="tPersonIdentifier" desc="0-based" cat="financial"/>
+								<itm fld="com.sustain.cases.model.Restitution.id" tbl="tRestitution" col="id" nn="true" dt="numeric(19,0)" pk="true" nf="true" pefn="com.sustain.person.model.PersonIdentifier" pent="PersonIdentifier" ptbl="tPersonIdentifier" cat="financial"/>
+								<!-- tRestitution_payorParties -->
+								<itm fld="Restitution_payorParties.payRestitutions_id" tbl="tRestitution_payorParties" col="payRestitutions_id" nn="true" dt="numeric(19,0)" fkto="tRestitution.id" pefn="com.sustain.cases.model.Restitution" pent="Restitution" ptbl="tRestitution" desc="fk column to tRestitution.id" cat="financial"/>
+								<itm fld="Restitution_payorParties.payorParties_id" tbl="tRestitution_payorParties" col="payorParties_id" nn="true" dt="numeric(19,0)" fkto="tParty.id" pefn="com.sustain.cases.model.Party" pent="Party" ptbl="tParty" desc="fk column to tParty.id; Party paying restitution" cat="financial"/>
+								<!-- StagingInvoices -->
+								<itm fld="StagingInvoices.id" tbl="StagingInvoices" col="id" nn="true" dt="numeric(19,0)" desc="arbitrary key used to identify the row; use identity" cat="financial"/>
+								<itm fld="StagingInvoices.tParty_id" tbl="StagingInvoices" col="tParty_id" nn="true" dt="numeric(19,0)" fkto="tParty.id" desc="fk column to tParty.id; payor party" cat="financial"/>
+								<itm fld="StagingInvoices.tAssessmentGroup_id" tbl="StagingInvoices" col="tAssessmentGroup_id" nn="true" dt="numeric(19,0)" fkto="tAssessmentGroup.id" desc="fk column to tAssessmentGroup.id" cat="financial"/>
+								<itm fld="StagingInvoices.assessmentMap" tbl="StagingInvoices" col="assessmentMap" nn="true" dt="varchar(255)" desc="required to create an invoice; sets of tAssessment.id : amount;  example: [10427:36.80, 10572:32.20, 10638:276.00]" cat="financial"/>
+								<itm fld="StagingInvoices.rescindCode" tbl="StagingInvoices" col="rescindCode" dt="varchar(255)" desc="only required if the invoice is to be rescinded" cat="financial"/>
+								<itm fld="StagingInvoices.description" tbl="StagingInvoices" col="description" dt="varchar(255)" desc="optional; the invoice description defaults to the AG.name if not provided" cat="financial"/>
+								<itm fld="StagingInvoices.createdDate" tbl="StagingInvoices" col="createdDate" dt="datetime" desc="optional; date the invoice was created in source system; defaults to conversion date if not provided" cat="financial"/>
+								<itm fld="StagingInvoices.dueDate" tbl="StagingInvoices" col="dueDate" dt="datetime" cat="financial"/>
+								<itm fld="StagingInvoices.tInvoice_id" tbl="StagingInvoices" col="tInvoice_id" dt="numeric(19,0)" nf="true" desc="created by the process" cat="financial"/>
+								<itm fld="StagingInvoices.error" tbl="StagingInvoices" col="error" dt="varchar(max)" nf="true" desc="used by the process to track errors" cat="financial"/>
+								<!-- StagingInvoiceAssessments -->
+								<itm fld="StagingInvoiceAssessments.StagingInvoices_id" tbl="StagingInvoiceAssessments" col="StagingInvoices_id" dt="numeric(19,0)" fkto="StagingInvoices.id" cat="financial"/>
+								<itm fld="StagingInvoiceAssessments.tAssessment_id" tbl="StagingInvoiceAssessments" col="tAssessment_id" dt="numeric(19,0)" fkto="tAssessment.id" desc="created by the process" cat="financial"/>
+								<itm fld="StagingInvoiceAssessments.amount" tbl="StagingInvoiceAssessments" col="amount" dt="decimal(18,2)" desc="used by the process to track errors" cat="financial"/>
+								<!-- StagingInvoicePayments -->
+								<itm fld="StagingInvoicePayments.id" tbl="StagingInvoicePayments" col="id" nn="true" dt="numeric(19,0)" desc="arbitrary key used to identify the row; use identity" cat="financial"/>
+								<itm fld="StagingInvoicePayments.tCase_id" tbl="StagingInvoicePayments" col="tCase_id" dt="numeric(19,0)" fkto="tCase.id" desc="fk column to tCase.id; for debugging and/or batching" cat="financial"/>
+								<itm fld="StagingInvoicePayments.tParty_id" tbl="StagingInvoicePayments" col="tParty_id" dt="numeric(19,0)" fkto="tParty.id" desc="fk column to tParty.id; optional; Payor can be the party reference on invoice if it the financially obligated party is the payor" cat="financial"/>
+								<itm fld="StagingInvoicePayments.tInvoice_id" tbl="StagingInvoicePayments" col="tInvoice_id" dt="numeric(19,0)" nn="true" fkto="tInvoice.id" desc="fk column to tParty.id; tInvoice to make payments on" cat="financial"/>
+								<itm fld="StagingInvoicePayments.pmtAmount" tbl="StagingInvoicePayments" col="pmtAmount" dt="decimal(18,2)" nn="true" desc="amount of payment" cat="financial"/>
+								<itm fld="StagingInvoicePayments.pmtDate" tbl="StagingInvoicePayments" col="pmtDate" dt="datetime2" desc="date of payment" cat="financial"/>
+								<itm fld="StagingInvoicePayments.monInstSetup_id" tbl="StagingInvoicePayments" col="monInstSetup_id" dt="numeric(19,0)" fkto="tMonInstrumentSetup.id" desc="fk column to tMonInstrumentSetup.id; either mon or non-mon is required to make payment" cat="financial"/>
+								<itm fld="StagingInvoicePayments.nonMonInstSetup_id" tbl="StagingInvoicePayments" col="nonMonInstSetup_id" dt="numeric(19,0)" fkto="tNonMonetarySetup.id" desc="fk column to tNonMonetarySetup.id; either mon or non-mon is required to make payment" cat="financial"/>
+								<itm fld="StagingInvoicePayments.voidReasonCode" tbl="StagingInvoicePayments" col="voidReasonCode" dt="varchar(255)" desc="optional; required when the payment is to be voided" cat="financial"/>
+								<itm fld="StagingInvoicePayments.voidDate" tbl="StagingInvoicePayments" col="voidDate" dt="datetime" desc="optional; otherwise this is populated with conversion date" cat="financial"/>
+								<itm fld="StagingInvoicePayments.tReceipt_id" tbl="StagingInvoicePayments" col="tReceipt_id" dt="numeric(19,0)" nf="true" desc="created by the process" cat="financial"/>
+								<itm fld="StagingInvoicePayments.tReceipt_voided_id" tbl="StagingInvoicePayments" col="tReceipt_voided_id" dt="numeric(19,0)" nf="true" desc="created by the process" cat="financial"/>
+								<itm fld="StagingInvoicePayments.error" tbl="StagingInvoicePayments" col="error" dt="varchar(max)" nf="true" desc="used by the process to track errors" cat="financial"/>
+								<!-- StagingPayPlans -->
+								<itm fld="StagingPayPlans.id" tbl="StagingPayPlans" col="id" nn="true" dt="numeric(19,0)" desc="arbitrary key used to identify the row; use identity" cat="financial"/>
+								<itm fld="StagingPayPlans.tParty_id" tbl="StagingPayPlans" col="tParty_id" dt="numeric(19,0)" nn="true" fkto="tParty.id" desc="fk column to tParty.id; party to be on the pay plan" cat="financial"/>
+								<itm fld="StagingPayPlans.startDate" tbl="StagingPayPlans" col="startDate" dt="datetime" nn="true" desc="plan start date" cat="financial"/>
+								<itm fld="StagingPayPlans.recurringCents" tbl="StagingPayPlans" col="recurringCents" dt="bigint" nn="true" desc="plan normal payment amount" cat="financial"/>
+								<itm fld="StagingPayPlans.dayOfMonth" tbl="StagingPayPlans" col="dayOfMonth" dt="tinyint" nn="true" desc="used to schedule, can be hardcoded or Day(startDate) in sql" cat="financial"/>
+								<itm fld="StagingPayPlans.numPayments" tbl="StagingPayPlans" col="numPayments" dt="int" desc="optional; not normally needed, but can be used if there was a reason to specify it" cat="financial"/>
+								<itm fld="StagingPayPlans.tPayplan_id" tbl="StagingPayPlans" col="tPayplan_id" dt="numeric(19,0)" nf="true" desc="created by the process" cat="financial"/>
+								<itm fld="StagingPayPlans.error" tbl="StagingPayPlans" col="error" dt="varchar(max)" nf="true" desc="used by the process to track errors" cat="financial"/>
+								<!-- StagingTrustDeposits -->
+								<itm fld="StagingTrustDeposits.id" tbl="StagingTrustDeposits" col="id" nn="true" dt="numeric(19,0)" desc="arbitrary key used to identify the row; use identity" cat="financial"/>
+								<itm fld="StagingTrustDeposits.tCase_id" tbl="StagingTrustDeposits" col="tCase_id" dt="numeric(19,0)" fkto="tCase.id" desc="fk column to tCase.id; for debugging and/or batching" cat="financial"/>
+								<itm fld="StagingTrustDeposits.tParty_payor_id" tbl="StagingTrustDeposits" col="tParty_payor_id" dt="numeric(19,0)" nn="true" fkto="tParty.id" desc="fk column to tParty.id; payor party" cat="financial"/>
+								<itm fld="StagingTrustDeposits.tAgencyAccount_id" tbl="StagingTrustDeposits" col="tAgencyAccount_id" dt="numeric(19,0)" nn="true" fkto="tAgencyAccount.id" desc="fk column to tAgencyAccount.id; required for party trusts only" cat="financial"/>
+								<itm fld="StagingTrustDeposits.pmtAmount" tbl="StagingTrustDeposits" col="pmtAmount" dt="decimal(18,2)" nn="true" desc="amount of payment" cat="financial"/>
+								<itm fld="StagingTrustDeposits.pmtDate" tbl="StagingTrustDeposits" col="pmtDate" dt="datetime" nn="true" desc="date of payment" cat="financial"/>
+								<itm fld="StagingTrustDeposits.monInstSetup_id" tbl="StagingTrustDeposits" col="monInstSetup_id" dt="numeric(19,0)" nn="true" fkto="tMonInstrumentSetup.id" desc="fk column to tMonInstrumentSetup.id" cat="financial"/>
+								<itm fld="StagingTrustDeposits.tParty_id" tbl="StagingTrustDeposits" col="tParty_id" dt="numeric(19,0)" nn="true" fkto="tParty.id" desc="fk column to tParty.id; required for party trust" cat="financial"/>
+								<itm fld="StagingTrustDeposits.tBail_id" tbl="StagingTrustDeposits" col="tBail_id" dt="numeric(19,0)" nn="true" fkto="tBail.id" desc="fk column to tBail.id; required for bail trust" cat="financial"/>
+								<itm fld="StagingTrustDeposits.tRestitution_id" tbl="StagingTrustDeposits" col="tRestitution_id" dt="numeric(19,0)" nn="true" fkto="tRestitution.id" desc="fk column to tRestitution.id; required for restitution trust" cat="financial"/>
+								<itm fld="StagingTrustDeposits.tPayplan_id" tbl="StagingTrustDeposits" col="tReceipt_id" dt="numeric(19,0)" nf="true" desc="created by the process" cat="financial"/>
+								<itm fld="StagingTrustDeposits.error" tbl="StagingTrustDeposits" col="error" dt="varchar(max)" nf="true" desc="used by the process to track errors" cat="financial"/>
+								<!-- StagingTrustDisbursements -->
+								<itm fld="StagingTrustDisbursements.id" tbl="StagingTrustDisbursements" col="id" nn="true" dt="numeric(19,0)" desc="arbitrary key used to identify the row; use identity" cat="financial"/>
+								<itm fld="StagingTrustDisbursements.tCase_id" tbl="StagingTrustDisbursements" col="tCase_id" dt="numeric(19,0)" fkto="tCase.id" desc="fk column to tCase.id; for debugging and/or batching" cat="financial"/>
+								<itm fld="StagingTrustDisbursements.tPerson_id" tbl="StagingTrustDisbursements" col="tPerson_id" dt="numeric(19,0)" fkto="tPerson.id" desc="fk column to tPerson.id; payee; if you have a payee party, passing the Person is cleanest" cat="financial"/>
+								<itm fld="StagingTrustDisbursements.payeeName" tbl="StagingTrustDisbursements" col="payeeName" dt="varchar(255)" desc="payee; if you dont have a payee party, the payee name is required" cat="financial"/>
+								<itm fld="StagingTrustDisbursements.tTrust_id" tbl="StagingTrustDisbursements" col="tTrust_id" dt="numeric(19,0)" nn="true" fkto="tTrust.id" desc="fk column to tTrust.id; trust we are disbursing from" cat="financial"/>
+								<itm fld="StagingTrustDisbursements.tReceipt_id" tbl="StagingTrustDisbursements" col="tReceipt_id" dt="numeric(19,0)" nn="true" fkto="tReceipt.id" desc="fk column to tReceipt.id; receipt created with the trust" cat="financial"/>
+								<itm fld="StagingTrustDisbursements.pmtAmount" tbl="StagingTrustDisbursements" col="pmtAmount" dt="decimal(18,2)" nn="true" desc="amount of payment" cat="financial"/>
+								<itm fld="StagingTrustDisbursements.tBank_id" tbl="StagingTrustDisbursements" col="tBank_id" dt="numeric(19,0)" nn="true" fkto="tBank.id" desc="fk column to tBank.id; required for voucher" cat="financial"/>
+								<itm fld="StagingTrustDisbursements.voucherReason" tbl="StagingTrustDisbursements" col="voucherReason" dt="varchar(255)" nn="true" desc="required for voucher" cat="financial"/>
+								<itm fld="StagingTrustDisbursements.checkDate" tbl="StagingTrustDisbursements" col="checkDate" dt="datetime" nn="true" desc="used by voucher and check" cat="financial"/>
+								<itm fld="StagingTrustDisbursements.checkNumber" tbl="StagingTrustDisbursements" col="checkNumber" nn="true" dt="numeric(19,0)" desc="required for check; numbers must be unique" cat="financial"/>
+								<itm fld="StagingTrustDisbursements.clearDate" tbl="StagingTrustDisbursements" col="clearDate" dt="datetime" desc="optional; can be used to assign a clearDate" cat="financial"/>
+								<itm fld="StagingTrustDisbursements.tReceipt_voucher_id" tbl="StagingTrustDisbursements" col="tReceipt_voucher_id" dt="numeric(19,0)" nf="true" desc="created by the process" cat="financial"/>
+								<itm fld="StagingTrustDisbursements.tVoucher_id" tbl="StagingTrustDisbursements" col="tVoucher_id" dt="numeric(19,0)" nf="true" desc="created by the process" cat="financial"/>
+								<itm fld="StagingTrustDisbursements.error" tbl="StagingTrustDisbursements" col="error" dt="varchar(max)" nf="true" desc="used by the process to track errors" cat="financial"/>
+							</inventory>
+						</param>
+					</params>
+				</action>
+			</actions>
+		</stage>
+	</stages>
+	<post>
+		<actions>
+			<action handler="DCU.WriteLogFile" progresslabel="write log file"/>
+		</actions>
+	</post>
+</conversion>
