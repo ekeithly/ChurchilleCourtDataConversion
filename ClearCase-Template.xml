@@ -1,0 +1,68 @@
+<conversion>
+	<properties>
+		<property name = "environment">Churchill-Migrated</property>
+		<property name = "sql.ecourt.db" desc = "eCourt conversion DB">JustWareMigrated_full</property>
+		<property name = "verbose" desc = "Detailed Logging">true</property>
+		<property name = "log.folder" desc = "Logging path">C:\eSeries\eCourt\ConversionFiles\Logs</property>
+	</properties> 
+	<databases>
+		<database name="${sql.ecourt.db}" description = "DB to connect into" type = "SqlServer" version = "2017" connectionstring = "Integrated Security=SSPI;Persist Security Info=False;Initial Catalog=JustWareMigrated_full;Data Source=EC2AMAZ-UUQ2CH0"/>
+	</databases>
+	
+	<stages>
+		
+
+			
+		<stage num="2" mode="Serial" desc="Clear eCourt Cases">
+			<actions>
+			
+				<action handler="SqlServer.TestConnection" desc="Verify connectivity - eCourt" progresslabel="Verify connectivity - eSeries">
+					<source database="${sql.ecourt.db}" />
+				</action>
+				
+
+				<action handler="Ecourt.DisableWorkFlowAndTimeStandards" progresslabel="disable workflow and timestandards" enabled = "false">
+					<source database="${sql.ecourt.db}" />
+					<params>
+						<param name="saveLocation">${log.folder}</param>
+					</params>
+				</action>
+		
+			
+				<action handler = "Ecourt.ClearCaseData" desc="clear case data" verbose="true" progresslabel="Clear Cases">
+					<source database="${sql.ecourt.db}"/>
+						<params>
+							<param name="excludeEmptyTables" desc="Optional: indicates to ignore empty tables in the process (default is false)">false</param>
+							<param name="saveFilePath" desc="Optional: if a full filename is specified, it will write out the sql script"></param>
+							<param name="scriptOnly" desc="Optional: indicates to not execute the generated sql (default is false)">false</param>					
+						</params>
+				</action>
+				
+			</actions>
+			</stage>
+			
+		<stage num="8" mode="Serial" desc="Shrink and Set Recovery Mode to Simple" enabled = "false">
+			<actions>
+				<action handler="SqlServer.Raw" desc="Setting Recovery Mode to Simple and Shrinking - eCourt" progresslabel="Setting Recovery Mode">
+					<source database="${sql.ecourt.db}" schema="ecourt">
+						<task handler="SqlServer.DB.SetRecoveryMode">simple</task>
+						<task handler="SqlServer.DB.Shrink">${sql.ecourt.db}</task> 
+					</source>
+				</action>
+			</actions>
+		</stage>
+		
+		
+	</stages>
+	<post>
+		<actions> 
+	
+		<action handler="DCU.WriteLogFile" desc="write log" progresslabel="write log file">
+				<params>
+					<param name="logfolder">C:\eSeries\eCourt\ConversionFiles\Logs</param>
+				</params>
+			</action>
+		</actions>
+	</post>
+</conversion>
+	

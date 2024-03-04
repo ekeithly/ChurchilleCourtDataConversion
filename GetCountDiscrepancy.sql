@@ -2,12 +2,12 @@ DROP TABLE IF EXISTS guamStaging.dbo.MigratedTableCounts
 DROP TABLE IF EXISTS guamStaging.dbo.ConvTableCounts
 
 GO
-USE [guameCourtConv_full]
+USE [JustWareMigrated_full]
 SELECT 
 
       QUOTENAME(SCHEMA_NAME(sOBJ.schema_id)) + '.' + QUOTENAME(sOBJ.name) AS [TableName]
       , SUM(sPTN.Rows) AS ocr
-INTO guamStaging.dbo.MigratedTableCounts
+INTO churchillStaging.dbo.MigratedTableCounts
 FROM 
       sys.objects AS sOBJ
       INNER JOIN sys.partitions AS sPTN
@@ -23,12 +23,12 @@ GROUP BY
 --ORDER BY [TableName]
 GO
 
-USE [guameCourtConv]
+USE churchilleCourtConv
 SELECT 
 
       QUOTENAME(SCHEMA_NAME(sOBJ.schema_id)) + '.' + QUOTENAME(sOBJ.name) AS [TableName]
       , SUM(sPTN.Rows) AS ocr
-INTO guamStaging.dbo.ConvTableCounts
+INTO churchillStaging.dbo.ConvTableCounts
 FROM 
       sys.objects AS sOBJ
       INNER JOIN sys.partitions AS sPTN
@@ -44,8 +44,8 @@ GROUP BY
 --ORDER BY [TableName]
 GO
 
-SELECT * FROM guamStaging.dbo.MigratedTableCounts m
-LEFT JOIN guamStaging.dbo.ConvTableCounts c
+SELECT * FROM churchillStaging.dbo.MigratedTableCounts m
+LEFT JOIN churchillStaging.dbo.ConvTableCounts c
 ON m.TableName = c.TableName
 WHERE m.ocr > 0 and c.ocr = 0;
 

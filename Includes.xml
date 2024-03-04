@@ -1,29 +1,29 @@
 <properties>
-	<property name="environment">CNMI Conversion</property>
-	<property name="sql.migrated.db" desc="Source DB">CNMI_CourtConv_full</property>
-	<property name="sql.ecourt.db" desc="eCourt conversion DB">cnmieCourtConv</property>
+	<property name="environment">Churchill Conversion</property>
+	<property name="sql.migrated.db" desc="Source DB">JustWareMigrated_full</property>
+	<property name="sql.ecourt.db" desc="eCourt conversion DB">churchilleCourtConv</property>
 	<property name="sql.master.db" desc="Master DB">master</property>
-	<property name="sql.staging.db" desc="Staging DB">cnmiStaging</property>
+	<property name="sql.staging.db" desc="Staging DB">churchillStaging</property>
 	<property name="verbose" desc="Detailed Logging">true</property>
 	<property name="db.backup.path" desc="Back-up location">G:\SQL\Backups</property>
 	<property name="db.start.path" desc="Conversion Start Folder">\1-Start\</property>
 	<property name="db.final.path" desc="Conversion Final Folder">\3-Final\</property>
 	<property name="db.final.name" desc="Name of Final eCourt BU">ecourt-final</property>
-	<property name="db.final.name.stage" desc="Name of Final Stage BU">cnmi-final</property>
+	<property name="db.final.name.stage" desc="Name of Final Stage BU">churchill-final</property>
 	<property name="batch" desc="indicates verbose logging">1000000</property>
 	<property name="stream" desc="indicates verbose logging">true</property>
-	<property name="log.folder" desc="Logging path">C:\eSeries\eCourt\conversionFiles\Logs</property>
+	<property name="log.folder" desc="Logging path">C:\eSeries\eCourt\ConversionFiles\Logs</property>
 	<property name="email.recipients">ekeithly@journaltech.com</property>
-	<property name="slack.url" desc="slack webhook url for ek">https://hooks.slack.com/services/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</property>
-	<property name="sql.server" desc="SQL Server Name">EC2AMAZ-DMLPVTS</property>
+	<property name="slack.url" desc="slack webhook url for ek">https://hooks.slack.com/services/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</property>
+	<property name="sql.server" desc="SQL Server Name">EC2AMAZ-UUQ2CH0</property>
 	<property name="date.time" desc="Current Datetime" >{0:MMddyyyy_hhmmss}</property>
-	<property name="tomcat.service.name" desc="Tomcat Serive Name">eCourtConv</property>
-	<property name="sql.service.name" desc="Tomcat Serive Name">mssqlserver</property> 	
-	<property name="master.string" desc="Master string">Integrated Security=SSPI;Persist Security Info=False;Initial Catalog=master;Data Source=EC2AMAZ-DMLPVTS</property>
-	<property name="ecourt.string" desc="eCourt string">Password=dbpass;Persist Security Info=True;User ID=ecourt;Initial Catalog=cnmieCourtConv;Data Source=EC2AMAZ-DMLPVTS</property>
-	<property name="staging.string" desc="eCourt string">Password=dbpass;Persist Security Info=True;User ID=ecourt;Initial Catalog=cnmiStaging;Data Source=EC2AMAZ-DMLPVTS</property>
-	<property name="migrated.string" desc="Migrated JW string">Password=dbpass;Persist Security Info=True;User ID=ecourt;Initial Catalog=CNMI_eCourt_full;Data Source=EC2AMAZ-DMLPVTS</property>
-	<property name="source.string" desc="Source string">Password=dbpass;Persist Security Info=True;User ID=ecourt;Initial Catalog=cnmiJustWare;Data Source=EC2AMAZ-DMLPVTS</property>
+	<property name="tomcat.service.name" desc="Tomcat Serive Name">eCourtConversion</property>
+	<property name="sql.service.name" desc="SQL Serive Name">MSSQLSERVER</property> 	
+	<property name="master.string" desc="Master string">Integrated Security=SSPI;Persist Security Info=False;Initial Catalog=master;Data Source=EC2AMAZ-UUQ2CH0</property>
+	<property name="ecourt.string" desc="eCourt string">Password=dbpass;Persist Security Info=True;User ID=ecourt;Initial Catalog=churchilleCourtConv;Data Source=EC2AMAZ-UUQ2CH0</property>
+	<property name="staging.string" desc="eCourt string">Password=dbpass;Persist Security Info=True;User ID=ecourt;Initial Catalog=churchillStaging;Data Source=EC2AMAZ-UUQ2CH0</property>
+	<property name="migrated.string" desc="Migrated JW string">Password=dbpass;Persist Security Info=True;User ID=ecourt;Initial Catalog=JustWareMigrated_full;Data Source=EC2AMAZ-UUQ2CH0</property>
+	<property name="source.string" desc="Source string">Password=dbpass;Persist Security Info=True;User ID=ecourt;Initial Catalog=JustWare;Data Source=EC2AMAZ-UUQ2CH0</property>
 	<property name="case.data.tables" desc="comma separated list of participating case tables">tCtConvertedCaseCosts, tCtConvertedCaseTransactions, tCtConvertedCaseDisbursement, tCtConvertedCaseCPOverrides, tCtConvertedCaseCostChangeHistory, tCtConvertedBondCase, ConvertedBond, tCtConvertedBondPost, tCtConvertedBondDistribution,tCtConvertedBondHistory,tCtConvertedCasePartyBondMerge, tCase,tSubCase,tPersonIdentifier,tPerson,tParty,tIdentification,tPersonProfile,tPersonAKA,tPhysicalCharacteristic,tPersonEligibility,tAddress,tTelephone,tCaseContact,tPlea,tCaseDisposition,tSubCaseDisposition,tCtCaseCategory,tCaseOtherNumber,tVehicle,tCourtTransfer,tCaseTrack,tCaseSeal,tIssue,tTracking,tExhibit,tExhibitTracking,tSpecialStatus,tSearchWarrant54,tCaseNote,tDocument,tCaseCrossReference,tDocumentTracking,tCtAdmonishmentWaiver,tCaseAssignment,tScheduledEvent,tUnderSubmission,tTimeStandard,tPartyStatus,tFeeWaiver,tTimeWaiver,tCourtSupervision,tJudgment,tJudgmentAward,tJudgmentAwardParty,tCustody,tWarrant,tBail,tBailStatus,tArrest,tArrestCharge,tSentence,tProbationCondition,tProbationViolation,tCtProbationStatus,tSentenceCondition,tADR,tADRAward,tConvertedOpenItem54,tConvertedOpenItemDetail54,tConvertedJournalEntry54,tConvertedDisbursement54,tConvertedCheck54,tCaseJoinder,tCaseJoinedItem,tDocumentStorageId,tDocumentStorageType,tCtProtectionOrder</property>
 	<property name="test.min.date">1/1/1900</property>
 	<property name="test.max.date">1/1/2050</property>
