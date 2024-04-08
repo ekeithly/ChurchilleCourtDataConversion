@@ -58,6 +58,14 @@
 					</source>
 				</action>
 				
+				<action handler="Comm.Slack" progresslabel="Send a Slack message" enabled="true">
+				<params>
+					<param name="url">${slack.url}</param>
+					<param name="from">DCU</param>
+					<param name="message">Consversion has started</param>
+				</params>
+			</action>
+				
 				
 				
 				
@@ -19499,7 +19507,7 @@
         
 						<param name="tasks">
 							<task handler="DCU.LogInfo">REST result: $[result]</task>
-							<task handler="Comm.Slack"><args url="${slack.url}" message="$[result]" from="DCU"/></task>
+						<!--	<task handler="Comm.Slack"><args url="${slack.url}" message="$[result]" from="DCU"/></task> -->
 						</param>
         
 						<param name="maxloops">5</param>
@@ -19527,7 +19535,7 @@
 				
 			<action handler="Comm.Slack" progresslabel="Send a Slack message">
 				<params>
-					<param name="url">${slack.url}</param>
+					<param name="url">${slack.url}</param> 
 					<param name="from">DCU</param>
 					<param name="message">Financial - Phase Completed</param>
 				</params>

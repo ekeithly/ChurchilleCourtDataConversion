@@ -14,7 +14,7 @@
 	<property name="stream" desc="indicates verbose logging">true</property>
 	<property name="log.folder" desc="Logging path">C:\eSeries\eCourt\ConversionFiles\Logs</property>
 	<property name="email.recipients">ekeithly@journaltech.com</property>
-	<property name="slack.url" desc="slack webhook url for ek">https://hooks.slack.com/services/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</property>
+	<property name="slack.url" desc="slack webhook url for ek">https://hooks.slack.com/services/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</property>
 	<property name="sql.server" desc="SQL Server Name">EC2AMAZ-UUQ2CH0</property>
 	<property name="date.time" desc="Current Datetime" >{0:MMddyyyy_hhmmss}</property>
 	<property name="tomcat.service.name" desc="Tomcat Serive Name">eCourtConversion</property>
